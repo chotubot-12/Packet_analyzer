@@ -9,6 +9,10 @@
 #include "rule_manager.h"
 #include "connection_tracker.h"
 #include "capture_source.h"
+#include "anomaly_detector.h"
+#include "blocklist.h"
+#include "vpn_detector.h"
+#include "events.h"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -60,6 +64,18 @@ public:
         size_t queue_size = 10000;
         std::string rules_file;
         bool verbose = false;
+
+        // Track B: Security configuration
+        std::string blocklist_file{"data/urlhaus_sample.txt"};
+        bool download_urlhaus = false;
+        std::string vpn_ranges_file{"data/vpn_ranges.json"};
+        bool block_malicious = true;
+        bool block_vpn = false;
+        size_t port_scan_threshold = 15;
+        double port_scan_window_sec = 5.0;
+        size_t syn_flood_threshold = 500;
+        double syn_flood_window_sec = 1.0;
+        std::string events_output_file;
     };
     
     DPIEngine(const Config& config);
@@ -141,14 +157,25 @@ public:
     // ========== Accessors ==========
     
     RuleManager& getRuleManager() { return *rule_manager_; }
+    AnomalyDetector& getAnomalyDetector() { return *anomaly_detector_; }
+    Blocklist& getBlocklist() { return *blocklist_; }
+    VPNDetector& getVPNDetector() { return *vpn_detector_; }
     const Config& getConfig() const { return config_; }
     bool isRunning() const { return running_; }
+
+    void loadBlocklist(const std::string& path);
+    void downloadBlocklist();
+    void loadVPNRanges(const std::string& path);
+    void setBlockVPN(bool block);
 
 private:
     Config config_;
     
     // Shared components
     std::unique_ptr<RuleManager> rule_manager_;
+    std::unique_ptr<AnomalyDetector> anomaly_detector_;
+    std::unique_ptr<Blocklist> blocklist_;
+    std::unique_ptr<VPNDetector> vpn_detector_;
     std::unique_ptr<GlobalConnectionTable> global_conn_table_;
     
     // Thread pools

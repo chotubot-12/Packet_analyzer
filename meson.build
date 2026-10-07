@@ -25,6 +25,10 @@ engine_sources = files(
   'src/fast_path.cpp',
   'src/capture_source.cpp',
   'src/rules_store.cpp',
+  'src/anomaly_detector.cpp',
+  'src/blocklist.cpp',
+  'src/vpn_detector.cpp',
+  'src/events.cpp',
 )
 
 # ---------------------------------------------------------------------------
@@ -51,13 +55,19 @@ if live_capture
   endif
 endif
 
+# Optional Windows platform dependencies (urlmon)
+win_deps = []
+if host_machine.system() == 'windows'
+  win_deps += meson.get_compiler('cpp').find_library('urlmon', required: false)
+endif
+
 # ---------------------------------------------------------------------------
 # DPI engine executable
 # ---------------------------------------------------------------------------
 dpi_engine = executable(
   'dpi_engine',
   engine_sources,
-  dependencies: [thread_dep] + pcap_deps,
+  dependencies: [thread_dep] + pcap_deps + win_deps,
   include_directories: include_directories('include'),
   install: true,
 )
@@ -74,6 +84,24 @@ dpi_cli = executable(
 )
 
 # ---------------------------------------------------------------------------
+# Track B Unit & Integration test binary
+# ---------------------------------------------------------------------------
+test_track_b = executable(
+  'test_track_b',
+  files(
+    'src/test_track_b.cpp',
+    'src/anomaly_detector.cpp',
+    'src/blocklist.cpp',
+    'src/vpn_detector.cpp',
+    'src/events.cpp',
+    'src/types.cpp',
+    'src/packet_parser.cpp',
+  ),
+  dependencies: [thread_dep] + win_deps,
+  include_directories: include_directories('include'),
+)
+
+# ---------------------------------------------------------------------------
 # Simple packet viewer (baseline tool)
 # ---------------------------------------------------------------------------
 packet_analyzer = executable(
@@ -86,7 +114,7 @@ packet_analyzer = executable(
 # Tests
 # ---------------------------------------------------------------------------
 if get_option('tests')
-  # Absolute paths make both tests independent of meson test's working dir.
+  # Absolute paths make all tests independent of meson test's working dir.
   test(
     'engine_smoke',
     dpi_engine,
@@ -106,5 +134,23 @@ if get_option('tests')
       '--store', meson.current_build_dir() / 'rules_test.json',
     ],
     timeout: 15,
+  )
+
+  test(
+    'track_b_unit_tests',
+    test_track_b,
+    timeout: 30,
+  )
+
+  test(
+    'security_smoke',
+    dpi_engine,
+    args: [
+      meson.current_source_dir() / 'test_malicious.pcap',
+      meson.current_build_dir() / 'output_malicious.pcap',
+      '--block-vpn',
+      '--events-out', meson.current_build_dir() / 'events_test.jsonl',
+    ],
+    timeout: 30,
   )
 endif

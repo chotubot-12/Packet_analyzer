@@ -47,6 +47,16 @@ Options:
   -l, --list-interfaces   List available capture interfaces and exit
   --verbose               Enable verbose output
 
+Security Options (Track B):
+  --urlhaus <file>        Load URLhaus blocklist from file
+  --download-urlhaus      Fetch latest URLhaus blocklist online
+  --vpn-ranges <file>     Load VPN CIDR ranges JSON file
+  --block-vpn             Block detected VPN and tunneled traffic
+  --no-block-malicious    Do not auto-block malicious domains
+  --port-scan-thresh <n>  Port scan unique port threshold (default: 15)
+  --syn-flood-thresh <n>  SYN flood packets/sec threshold (default: 500)
+  --events-out <file>     Write JSON security events to file
+
 Examples:
   )" << program << R"( capture.pcap filtered.pcap
   )" << program << R"( -i eth0 -o live.pcap --rules rules.json
@@ -100,15 +110,18 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (live_interface.empty() && (argc < 3 || argv[1][0] == '-')) {
-        printUsage(argv[0]);
-        return 1;
-    }
-
-    // Positional args: file mode uses argv[1]/argv[2].
+    int opt_start = 1;
     if (live_interface.empty()) {
+        if (argv[1][0] == '-') {
+            printUsage(argv[0]);
+            return 1;
+        }
         input_file = argv[1];
-        output_file = argv[2];
+        opt_start = 2;
+        if (argc >= 3 && argv[2][0] != '-') {
+            output_file = argv[2];
+            opt_start = 3;
+        }
     }
 
     DPIEngine::Config config;
@@ -119,7 +132,7 @@ int main(int argc, char* argv[]) {
     std::vector<std::string> block_apps;
     std::vector<std::string> block_domains;
 
-    for (int i = (live_interface.empty() ? 3 : 1); i < argc; i++) {
+    for (int i = opt_start; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--block-ip" && i + 1 < argc) {
             block_ips.push_back(argv[++i]);
@@ -129,6 +142,22 @@ int main(int argc, char* argv[]) {
             block_domains.push_back(argv[++i]);
         } else if (arg == "--rules" && i + 1 < argc) {
             rules_store_path = argv[++i];
+        } else if (arg == "--urlhaus" && i + 1 < argc) {
+            config.blocklist_file = argv[++i];
+        } else if (arg == "--download-urlhaus") {
+            config.download_urlhaus = true;
+        } else if (arg == "--vpn-ranges" && i + 1 < argc) {
+            config.vpn_ranges_file = argv[++i];
+        } else if (arg == "--block-vpn") {
+            config.block_vpn = true;
+        } else if (arg == "--no-block-malicious") {
+            config.block_malicious = false;
+        } else if (arg == "--port-scan-thresh" && i + 1 < argc) {
+            config.port_scan_threshold = std::stoul(argv[++i]);
+        } else if (arg == "--syn-flood-thresh" && i + 1 < argc) {
+            config.syn_flood_threshold = std::stoul(argv[++i]);
+        } else if (arg == "--events-out" && i + 1 < argc) {
+            config.events_output_file = argv[++i];
         } else if (arg == "--lbs" && i + 1 < argc) {
             config.num_load_balancers = std::stoi(argv[++i]);
         } else if (arg == "--fps" && i + 1 < argc) {

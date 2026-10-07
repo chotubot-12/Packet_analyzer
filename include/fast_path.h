@@ -6,6 +6,10 @@
 #include "connection_tracker.h"
 #include "rule_manager.h"
 #include "sni_extractor.h"
+#include "anomaly_detector.h"
+#include "blocklist.h"
+#include "vpn_detector.h"
+#include "events.h"
 #include <thread>
 #include <atomic>
 #include <memory>
@@ -40,7 +44,10 @@ public:
     // output_callback: Called when packet should be forwarded
     FastPathProcessor(int fp_id,
                       RuleManager* rule_manager,
-                      PacketOutputCallback output_callback);
+                      PacketOutputCallback output_callback,
+                      AnomalyDetector* anomaly_detector = nullptr,
+                      Blocklist* blocklist = nullptr,
+                      VPNDetector* vpn_detector = nullptr);
     
     ~FastPathProcessor();
     
@@ -85,6 +92,11 @@ private:
     
     // Rule manager (shared, read-only)
     RuleManager* rule_manager_;
+    
+    // Security detectors (Track B)
+    AnomalyDetector* anomaly_detector_{nullptr};
+    Blocklist* blocklist_{nullptr};
+    VPNDetector* vpn_detector_{nullptr};
     
     // Output callback
     PacketOutputCallback output_callback_;
@@ -133,7 +145,10 @@ public:
     // output_callback: Shared output callback
     FPManager(int num_fps,
               RuleManager* rule_manager,
-              PacketOutputCallback output_callback);
+              PacketOutputCallback output_callback,
+              AnomalyDetector* anomaly_detector = nullptr,
+              Blocklist* blocklist = nullptr,
+              VPNDetector* vpn_detector = nullptr);
     
     ~FPManager();
     
