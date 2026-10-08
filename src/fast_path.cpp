@@ -132,6 +132,9 @@ PacketAction FastPathProcessor::processPacket(PacketJob& job) {
 
                 if (vpn_detector_->shouldBlockVPN()) {
                     conn_tracker_.blockConnection(conn);
+                    if (engine_stats_) {
+                        engine_stats_->blocked_by_vpn++;
+                    }
                     return PacketAction::DROP;
                 }
             }
@@ -159,6 +162,8 @@ PacketAction FastPathProcessor::processPacket(PacketJob& job) {
         return PacketAction::DROP;
     }
 
+    bool was_classified = (conn->state == ConnectionState::CLASSIFIED);
+
     // Track B: DNS security checks (tunneling + blocklist) must run for every
     // DNS payload on the flow, not only the first, unclassified query.
     if (job.payload_length > 0 &&
@@ -169,8 +174,6 @@ PacketAction FastPathProcessor::processPacket(PacketJob& job) {
     if (conn->state == ConnectionState::BLOCKED) {
         return PacketAction::DROP;
     }
-
-    bool was_classified = (conn->state == ConnectionState::CLASSIFIED);
 
     // If connection not yet classified, try to inspect payload
     if (!was_classified && job.payload_length > 0) {
@@ -244,18 +247,21 @@ void FastPathProcessor::inspectDNSPayload(PacketJob& job, Connection* conn) {
     // Track B: Malicious Domain Blocklist (URLhaus)
     if (blocklist_ && block_malicious_) {
         std::string matched_rule;
-        if (blocklist_->isBlocked(*domain, &matched_rule)) {
-            conn_tracker_.blockConnection(conn);
-            SecurityAlert alert;
-            alert.timestamp = job.ts_sec + static_cast<double>(job.ts_usec) / 1000000.0;
-            alert.alert_type = "MALICIOUS";
-            alert.tuple = job.tuple;
-            alert.app_or_domain = *domain;
-            alert.blocked = true;
-            alert.reason = "MALICIOUS";
-            alert.detail = "Matched URLhaus rule: " + matched_rule;
-            EventSink::instance().emitAlert(alert);
-        }
+            if (blocklist_->isBlocked(*domain, &matched_rule)) {
+                conn_tracker_.blockConnection(conn);
+                if (engine_stats_) {
+                    engine_stats_->blocked_by_malicious++;
+                }
+                SecurityAlert alert;
+                alert.timestamp = job.ts_sec + static_cast<double>(job.ts_usec) / 1000000.0;
+                alert.alert_type = "MALICIOUS";
+                alert.tuple = job.tuple;
+                alert.app_or_domain = *domain;
+                alert.blocked = true;
+                alert.reason = "MALICIOUS";
+                alert.detail = "Matched URLhaus rule: " + matched_rule;
+                EventSink::instance().emitAlert(alert);
+            }
     }
 
     if (first_classification && engine_stats_) {
@@ -287,6 +293,9 @@ bool FastPathProcessor::tryExtractSNI(const PacketJob& job, Connection* conn) {
             std::string matched_rule;
             if (blocklist_->isBlocked(*sni, &matched_rule)) {
                 conn_tracker_.blockConnection(conn);
+                if (engine_stats_) {
+                    engine_stats_->blocked_by_malicious++;
+                }
                 SecurityAlert alert;
                 alert.timestamp = job.ts_sec + static_cast<double>(job.ts_usec) / 1000000.0;
                 alert.alert_type = "MALICIOUS";
@@ -331,6 +340,9 @@ bool FastPathProcessor::tryExtractHTTPHost(const PacketJob& job, Connection* con
             std::string matched_rule;
             if (blocklist_->isBlocked(*host, &matched_rule)) {
                 conn_tracker_.blockConnection(conn);
+                if (engine_stats_) {
+                    engine_stats_->blocked_by_malicious++;
+                }
                 SecurityAlert alert;
                 alert.timestamp = job.ts_sec + static_cast<double>(job.ts_usec) / 1000000.0;
                 alert.alert_type = "MALICIOUS";

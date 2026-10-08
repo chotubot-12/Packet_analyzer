@@ -42,7 +42,11 @@ void testShannonEntropy() {
     std::cout << "  Entropy of hex payload: " << e_high << "\n";
     CHECK(e_high > 3.5);
 
-    std::cout << "  PASS: Shannon Entropy\n";
+    if (g_failures == 0) {
+        std::cout << "  PASS: Shannon Entropy\n";
+    } else {
+        std::cout << "  PARTIAL: Shannon Entropy (failures detected)\n";
+    }
 }
 
 void testDomainDepthAndLabels() {
@@ -50,13 +54,19 @@ void testDomainDepthAndLabels() {
 
     auto labels = AnomalyDetector::splitDomainLabels("a.b.c.d.example.com");
     CHECK(labels.size() == 6);
-    CHECK(labels[0] == "a");
-    CHECK(labels[5] == "com");
+    if (labels.size() >= 6) {
+        CHECK(labels[0] == "a");
+        CHECK(labels[5] == "com");
+    }
 
     size_t depth = AnomalyDetector::calculateDomainDepth("data.tunnel.sub.evilcorp.com");
     CHECK(depth == 4);
 
-    std::cout << "  PASS: Domain Depth\n";
+    if (g_failures == 0) {
+        std::cout << "  PASS: Domain Depth\n";
+    } else {
+        std::cout << "  PARTIAL: Domain Depth (failures detected)\n";
+    }
 }
 
 void testDNSTunnelHeuristics() {
@@ -82,7 +92,11 @@ void testDNSTunnelHeuristics() {
     bool tunnel_detected = detector.inspectDNSQuery(normal_job, tunnel_query);
     CHECK(tunnel_detected);
 
-    std::cout << "  PASS: DNS Tunneling Detection\n";
+    if (g_failures == 0) {
+        std::cout << "  PASS: DNS Tunneling Detection\n";
+    } else {
+        std::cout << "  PARTIAL: DNS Tunneling Detection (failures detected)\n";
+    }
 }
 
 void testPortScanDetector() {
@@ -123,7 +137,11 @@ void testPortScanDetector() {
     CHECK(breach);
     CHECK(detector.isIPAutoBlocked(attacker_ip));
 
-    std::cout << "  PASS: Port Scan Detection\n";
+    if (g_failures == 0) {
+        std::cout << "  PASS: Port Scan Detection\n";
+    } else {
+        std::cout << "  PARTIAL: Port Scan Detection (failures detected)\n";
+    }
 }
 
 void testSYNFloodDetector() {
@@ -165,7 +183,11 @@ void testSYNFloodDetector() {
     bool flooded = detector.processPacket(trigger_job);
     CHECK(flooded);
 
-    std::cout << "  PASS: SYN Flood Detection\n";
+    if (g_failures == 0) {
+        std::cout << "  PASS: SYN Flood Detection\n";
+    } else {
+        std::cout << "  PARTIAL: SYN Flood Detection (failures detected)\n";
+    }
 }
 
 void testBlocklistTrieAndMatching() {
@@ -192,7 +214,11 @@ void testBlocklistTrieAndMatching() {
     // URL normalization
     CHECK(Blocklist::extractDomainFromURL("https://c2.test.com:8443/api?x=1") == "c2.test.com");
 
-    std::cout << "  PASS: Blocklist & Trie Matching\n";
+    if (g_failures == 0) {
+        std::cout << "  PASS: Blocklist & Trie Matching\n";
+    } else {
+        std::cout << "  PARTIAL: Blocklist & Trie Matching (failures detected)\n";
+    }
 }
 
 void testVPNDetection() {
@@ -256,7 +282,11 @@ void testVPNDetection() {
     CHECK(cidr_res.detected);
     CHECK(cidr_res.type == VPNType::VPN_IP_RANGE);
 
-    std::cout << "  PASS: VPN Detection\n";
+    if (g_failures == 0) {
+        std::cout << "  PASS: VPN Detection\n";
+    } else {
+        std::cout << "  PARTIAL: VPN Detection (failures detected)\n";
+    }
 }
 
 int main() {

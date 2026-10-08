@@ -13,6 +13,7 @@
 #else
 #include <unistd.h>
 #include <sys/wait.h>
+#include <errno.h>
 #endif
 
 namespace DPI {
@@ -67,13 +68,16 @@ bool runCurlDownload(const std::string& url, const std::string& out_path) {
     }
     if (pid == 0) {
         // Child: never touches the shell, so the URL/path cannot be injected.
-        execlp("curl", "curl", "-s", "-f", "-L", url.c_str(), "-o", out_path.c_str(),
+        execlp("curl", "curl", "-s", "-f", "-L", "--connect-timeout", "10", "--max-time", "30",
+               url.c_str(), "-o", out_path.c_str(),
                static_cast<char*>(nullptr));
         _exit(127);
     }
     int status = 0;
-    if (waitpid(pid, &status, 0) < 0) {
-        return false;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) {
+            return false;
+        }
     }
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 #endif

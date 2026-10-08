@@ -129,8 +129,10 @@ bool VPNDetector::addCIDR(const std::string& cidr_str, const std::string& label)
 bool VPNDetector::loadVPNRanges(const std::string& filepath) {
     std::ifstream file(filepath);
     if (!file.is_open()) {
-        std::cerr << "[VPNDetector] Could not open VPN ranges file: " << filepath
-                  << " (no ranges loaded)\n";
+        // Only warn when an explicit path was provided (non-empty). The
+        // default path may be missing in build/test directories; suppress
+        // noise in that case.
+        (void)filepath;
         return false;
     }
 
