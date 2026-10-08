@@ -71,6 +71,17 @@ bool DPIEngine::initialize() {
     if (!config_.events_output_file.empty()) {
         EventSink::instance().openFile(config_.events_output_file);
     }
+
+    // Create IPC emitter if enabled
+    if (config_.enable_ipc) {
+        ipc_emitter_ = std::make_unique<IPCEmitter>();
+        if (!ipc_emitter_->connect(config_.ipc_host, config_.ipc_port)) {
+            std::cout << "[DPIEngine] IPC emitter enabled (" << config_.ipc_host << ":" << config_.ipc_port 
+                      << ") - waiting for server connection\n";
+        } else {
+            std::cout << "[DPIEngine] Connected IPC emitter to " << config_.ipc_host << ":" << config_.ipc_port << "\n";
+        }
+    }
     
     // Create output callback
     auto output_cb = [this](const PacketJob& job, PacketAction action) {
@@ -85,7 +96,9 @@ bool DPIEngine::initialize() {
         output_cb,
         anomaly_detector_.get(),
         blocklist_.get(),
-        vpn_detector_.get()
+        vpn_detector_.get(),
+        ipc_emitter_.get(),
+        &stats_
     );
     
     // Create LB manager (creates LB threads, connects to FP queues)
@@ -113,6 +126,11 @@ void DPIEngine::start() {
     
     // Start output thread
     output_thread_ = std::thread(&DPIEngine::outputThreadFunc, this);
+
+    // Start IPC thread if IPC enabled
+    if (config_.enable_ipc) {
+        ipc_thread_ = std::thread(&DPIEngine::ipcThreadFunc, this);
+    }
     
     // Start FP threads
     fp_manager_->startAll();
@@ -143,8 +161,46 @@ void DPIEngine::stop() {
     if (output_thread_.joinable()) {
         output_thread_.join();
     }
+
+    // Disconnect IPC emitter so pending sends unblock immediately
+    if (ipc_emitter_) {
+        ipc_emitter_->disconnect();
+    }
+
+    if (ipc_thread_.joinable()) {
+        ipc_thread_.join();
+    }
     
     std::cout << "[DPIEngine] All threads stopped\n";
+}
+
+void DPIEngine::ipcThreadFunc() {
+    uint64_t last_bytes = 0;
+    auto last_time = std::chrono::steady_clock::now();
+
+    while (running_) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        if (!running_) break;
+
+        auto now = std::chrono::steady_clock::now();
+        double dt = std::chrono::duration<double>(now - last_time).count();
+        uint64_t current_bytes = stats_.total_bytes.load();
+        double throughput_bps = 0.0;
+        if (dt > 0.0 && current_bytes >= last_bytes) {
+            throughput_bps = ((current_bytes - last_bytes) * 8.0) / dt;
+        }
+        last_bytes = current_bytes;
+        last_time = now;
+
+        if (ipc_emitter_) {
+            if (!ipc_emitter_->isConnected()) {
+                ipc_emitter_->connect(config_.ipc_host, config_.ipc_port);
+            }
+            if (ipc_emitter_->isConnected()) {
+                ipc_emitter_->emitStats(stats_, throughput_bps);
+            }
+        }
+    }
 }
 
 void DPIEngine::waitForCompletion() {

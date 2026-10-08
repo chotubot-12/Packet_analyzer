@@ -13,6 +13,7 @@
 #include "blocklist.h"
 #include "vpn_detector.h"
 #include "events.h"
+#include "ipc_emitter.h"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -76,6 +77,11 @@ public:
         size_t syn_flood_threshold = 500;
         double syn_flood_window_sec = 1.0;
         std::string events_output_file;
+
+        // Track A: IPC telemetry
+        bool enable_ipc = false;
+        std::string ipc_host = "127.0.0.1";
+        uint16_t ipc_port = 9000;
     };
     
     DPIEngine(const Config& config);
@@ -162,6 +168,7 @@ public:
     VPNDetector& getVPNDetector() { return *vpn_detector_; }
     const Config& getConfig() const { return config_; }
     bool isRunning() const { return running_; }
+    IPCEmitter* getIPCEmitter() { return ipc_emitter_.get(); }
 
     void loadBlocklist(const std::string& path);
     void downloadBlocklist();
@@ -177,6 +184,7 @@ private:
     std::unique_ptr<Blocklist> blocklist_;
     std::unique_ptr<VPNDetector> vpn_detector_;
     std::unique_ptr<GlobalConnectionTable> global_conn_table_;
+    std::unique_ptr<IPCEmitter> ipc_emitter_;
     
     // Thread pools
     std::unique_ptr<FPManager> fp_manager_;
@@ -199,9 +207,11 @@ private:
     
     // Reader thread (separate for PCAP input)
     std::thread reader_thread_;
+    std::thread ipc_thread_;
     
-    // Output handling
+    // Output & IPC handling
     void outputThreadFunc();
+    void ipcThreadFunc();
     void handleOutput(const PacketJob& job, PacketAction action);
     
     // Write PCAP header to output file

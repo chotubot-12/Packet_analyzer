@@ -1,4 +1,5 @@
 #include "fast_path.h"
+#include "ipc_emitter.h"
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -15,7 +16,9 @@ FastPathProcessor::FastPathProcessor(int fp_id,
                                      PacketOutputCallback output_callback,
                                      AnomalyDetector* anomaly_detector,
                                      Blocklist* blocklist,
-                                     VPNDetector* vpn_detector)
+                                     VPNDetector* vpn_detector,
+                                     IPCEmitter* ipc_emitter,
+                                     DPIStats* engine_stats)
     : fp_id_(fp_id),
       input_queue_(10000),
       conn_tracker_(fp_id),
@@ -23,7 +26,9 @@ FastPathProcessor::FastPathProcessor(int fp_id,
       anomaly_detector_(anomaly_detector),
       blocklist_(blocklist),
       vpn_detector_(vpn_detector),
-      output_callback_(std::move(output_callback)) {
+      output_callback_(std::move(output_callback)),
+      ipc_emitter_(ipc_emitter),
+      engine_stats_(engine_stats) {
 }
 
 FastPathProcessor::~FastPathProcessor() {
@@ -141,8 +146,10 @@ PacketAction FastPathProcessor::processPacket(PacketJob& job) {
         return PacketAction::DROP;
     }
     
+    bool was_classified = (conn->state == ConnectionState::CLASSIFIED);
+
     // If connection not yet classified, try to inspect payload
-    if (conn->state != ConnectionState::CLASSIFIED && job.payload_length > 0) {
+    if (!was_classified && job.payload_length > 0) {
         inspectPayload(job, conn);
     }
 
@@ -151,7 +158,16 @@ PacketAction FastPathProcessor::processPacket(PacketJob& job) {
     }
     
     // Check rules (even for classified connections, as rules might change)
-    return checkRules(job, conn);
+    PacketAction action = checkRules(job, conn);
+
+    // Emit single IPC event when connection transitions to CLASSIFIED and is not blocked
+    if (!was_classified && conn->state == ConnectionState::CLASSIFIED && action != PacketAction::DROP) {
+        if (ipc_emitter_) {
+            ipc_emitter_->emitAppClassified(job.tuple, appTypeToString(conn->app_type), false, "", job.data.size());
+        }
+    }
+
+    return action;
 }
 
 void FastPathProcessor::inspectPayload(PacketJob& job, Connection* conn) {
@@ -198,6 +214,7 @@ void FastPathProcessor::inspectPayload(PacketJob& job, Connection* conn) {
                     EventSink::instance().emitAlert(alert);
                 }
             }
+            if (engine_stats_) engine_stats_->app_counts[static_cast<size_t>(AppType::DNS)]++;
             return;
         }
     }
@@ -205,8 +222,10 @@ void FastPathProcessor::inspectPayload(PacketJob& job, Connection* conn) {
     // Basic port-based classification as fallback
     if (job.tuple.dst_port == 80) {
         conn_tracker_.classifyConnection(conn, AppType::HTTP, "");
+        if (engine_stats_) engine_stats_->app_counts[static_cast<size_t>(AppType::HTTP)]++;
     } else if (job.tuple.dst_port == 443) {
         conn_tracker_.classifyConnection(conn, AppType::HTTPS, "");
+        if (engine_stats_) engine_stats_->app_counts[static_cast<size_t>(AppType::HTTPS)]++;
     }
 }
 
@@ -245,6 +264,7 @@ bool FastPathProcessor::tryExtractSNI(const PacketJob& job, Connection* conn) {
                 EventSink::instance().emitAlert(alert);
             }
         }
+        if (engine_stats_) engine_stats_->app_counts[static_cast<size_t>(app)]++;
         
         if (app != AppType::UNKNOWN && app != AppType::HTTPS) {
             classification_hits_++;
@@ -288,6 +308,7 @@ bool FastPathProcessor::tryExtractHTTPHost(const PacketJob& job, Connection* con
                 EventSink::instance().emitAlert(alert);
             }
         }
+        if (engine_stats_) engine_stats_->app_counts[static_cast<size_t>(app)]++;
         
         if (app != AppType::UNKNOWN && app != AppType::HTTP) {
             classification_hits_++;
@@ -319,19 +340,28 @@ PacketAction FastPathProcessor::checkRules(const PacketJob& job, Connection* con
         // Log the block
         std::ostringstream ss;
         ss << "[FP" << fp_id_ << "] BLOCKED packet: ";
+        std::string reason_str = "OTHER";
         
         switch (block_reason->type) {
             case RuleManager::BlockReason::BLOCK_IP:
                 ss << "IP " << block_reason->detail;
+                reason_str = "IP";
+                if (engine_stats_) engine_stats_->blocked_by_ip++;
                 break;
             case RuleManager::BlockReason::BLOCK_APP:
                 ss << "App " << block_reason->detail;
+                reason_str = "APP";
+                if (engine_stats_) engine_stats_->blocked_by_app++;
                 break;
             case RuleManager::BlockReason::BLOCK_DOMAIN:
                 ss << "Domain " << block_reason->detail;
+                reason_str = "DOMAIN";
+                if (engine_stats_) engine_stats_->blocked_by_domain++;
                 break;
             case RuleManager::BlockReason::BLOCK_PORT:
                 ss << "Port " << block_reason->detail;
+                reason_str = "PORT";
+                if (engine_stats_) engine_stats_->blocked_by_port++;
                 break;
             case RuleManager::BlockReason::BLOCK_MALICIOUS:
                 ss << "Malicious " << block_reason->detail;
@@ -342,6 +372,10 @@ PacketAction FastPathProcessor::checkRules(const PacketJob& job, Connection* con
             case RuleManager::BlockReason::BLOCK_ANOMALY:
                 ss << "Anomaly " << block_reason->detail;
                 break;
+        }
+        if (engine_stats_) engine_stats_->blocked_total++;
+        if (ipc_emitter_) {
+            ipc_emitter_->emitAppClassified(job.tuple, appTypeToString(conn->app_type), true, reason_str, job.data.size());
         }
         
         std::cout << ss.str() << std::endl;
@@ -408,12 +442,14 @@ FPManager::FPManager(int num_fps,
                      PacketOutputCallback output_callback,
                      AnomalyDetector* anomaly_detector,
                      Blocklist* blocklist,
-                     VPNDetector* vpn_detector) {
+                     VPNDetector* vpn_detector,
+                     IPCEmitter* ipc_emitter,
+                     DPIStats* engine_stats) {
     
     // Create FP processors (each has its own input queue)
     for (int i = 0; i < num_fps; i++) {
         auto fp = std::make_unique<FastPathProcessor>(
-            i, rule_manager, output_callback, anomaly_detector, blocklist, vpn_detector);
+            i, rule_manager, output_callback, anomaly_detector, blocklist, vpn_detector, ipc_emitter, engine_stats);
         fps_.push_back(std::move(fp));
     }
     

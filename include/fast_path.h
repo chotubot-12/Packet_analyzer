@@ -10,6 +10,7 @@
 #include "blocklist.h"
 #include "vpn_detector.h"
 #include "events.h"
+#include "ipc_emitter.h"
 #include <thread>
 #include <atomic>
 #include <memory>
@@ -47,7 +48,9 @@ public:
                       PacketOutputCallback output_callback,
                       AnomalyDetector* anomaly_detector = nullptr,
                       Blocklist* blocklist = nullptr,
-                      VPNDetector* vpn_detector = nullptr);
+                      VPNDetector* vpn_detector = nullptr,
+                      IPCEmitter* ipc_emitter = nullptr,
+                      DPIStats* engine_stats = nullptr);
     
     ~FastPathProcessor();
     
@@ -101,6 +104,10 @@ private:
     // Output callback
     PacketOutputCallback output_callback_;
     
+    // Optional IPC Emitter & Global Engine Stats pointers
+    IPCEmitter* ipc_emitter_{nullptr};
+    DPIStats* engine_stats_{nullptr};
+    
     // Statistics
     std::atomic<uint64_t> packets_processed_{0};
     std::atomic<uint64_t> packets_forwarded_{0};
@@ -148,7 +155,9 @@ public:
               PacketOutputCallback output_callback,
               AnomalyDetector* anomaly_detector = nullptr,
               Blocklist* blocklist = nullptr,
-              VPNDetector* vpn_detector = nullptr);
+              VPNDetector* vpn_detector = nullptr,
+              IPCEmitter* ipc_emitter = nullptr,
+              DPIStats* engine_stats = nullptr);
     
     ~FPManager();
     
