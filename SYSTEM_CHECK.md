@@ -1,8 +1,8 @@
 # System Verification & Basic Checks Record
 
-**Generated:** 2026-10-08 05:47:35 UTC  
-**Commit:** `557e6fb` on branch `pr-7`  
-**Repository State:** Modified (2 tracked files)  
+**Generated:** 2026-10-08 05:57:47 UTC  
+**Base Revision:** `1577c02` on branch `pr-7` (checks ran against this revision plus the working tree; this record is not part of the revision it describes)  
+**Repository State:** Clean (0 tracked modifications)  
 
 ---
 
@@ -27,7 +27,7 @@
 | **upstream** | `error: No such remote 'upstream'` |
 
 - **Current Branch:** `pr-7`
-- **Working Tree:** Modified (2 tracked files)
+- **Working Tree:** Clean (0 tracked modifications)
 - **Baseline Alignment:** Not verified by this script (compare against `upstream/main` manually)
 
 ---
@@ -41,12 +41,13 @@ A `WARN` means the installed version is missing a declared bound or falls outsid
 | Package | Detected Version | Purpose | Audit Result |
 |---|---|---|---|
 | `fastapi` | 0.139.2 (declared >=0.109.0,<1.0.0) | FastAPI web framework | PASS |
-| `starlette` | 1.3.1 | ASGI toolkit | WARN (no declared bound) |
 | `uvicorn` | 0.30.0 (declared >=0.27.0,<1.0.0) | ASGI server | PASS |
+| `websockets` | 15.0.1 (declared >=12.0,<14.0) | WebSocket protocol | WARN (outside declared bounds) |
 | `reportlab` | 4.5.1 (declared >=4.0.0,<5.0.0) | PDF generation | PASS |
 | `pytest` | 9.0.3 (declared >=8.0.0,<9.0.0) | Test runner | WARN (outside declared bounds) |
 | `httpx` | 0.27.0 (declared >=0.27.0,<0.28.0) | HTTP client / TestClient | PASS |
-| `pydantic` | 2.9.2 | Data validation | WARN (no declared bound) |
+| `starlette` | 1.3.1 | ASGI toolkit | INFO (transitive, no declared bound) |
+| `pydantic` | 2.9.2 | Data validation | INFO (transitive, no declared bound) |
 
 ---
 
@@ -71,7 +72,7 @@ A `WARN` means the installed version is missing a declared bound or falls outsid
     from starlette.testclient import TestClient as TestClient  # noqa
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-16 passed, 1 warning in 0.91s
+16 passed, 1 warning in 0.96s
 ```
 
 ---
@@ -82,4 +83,4 @@ This system check record verifies that:
 1. All Python core dependencies for the web dashboard and report generator are importable; any version-bound mismatches are reported as `WARN` in section 3.
 2. The dashboard test suite (`dashboard/test_dashboard.py`) passes.
 3. Synthetic test traffic generation functions cleanly.
-4. The tracked codebase files checked above are present and intact.
+4. The tracked codebase files checked above are present (existence only, not content integrity).
