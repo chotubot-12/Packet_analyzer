@@ -103,7 +103,7 @@ def audit_dependency(pkg: str, desc: str, specs: dict[str, str]) -> tuple[str, s
 
     spec = specs.get(pkg)
     if spec is None:
-        return pkg, ver, desc, "WARN (no declared bound)"
+        return pkg, ver, desc, "INFO (transitive, no declared bound)"
     if satisfies(ver, spec) is False:
         return pkg, f"{ver} (declared {spec})", desc, "WARN (outside declared bounds)"
     return pkg, f"{ver} (declared {spec})", desc, "PASS"
@@ -122,7 +122,10 @@ def main() -> int:
     _, git_branch = run_command(["git", "branch", "--show-current"])
     _, git_head = run_command(["git", "rev-parse", "--short", "HEAD"])
     _, git_status = run_command(["git", "status", "--porcelain", "-uno"])
-    git_clean = "Clean (0 tracked modifications)" if not git_status else f"Modified ({len(git_status.splitlines())} tracked files)"
+    # Exclude this record itself: it is regenerated on every run, so counting it
+    # as a modification would make the recorded state misleading.
+    tracked_changes = [ln for ln in git_status.splitlines() if not ln.strip().endswith("SYSTEM_CHECK.md")]
+    git_clean = "Clean (0 tracked modifications)" if not tracked_changes else f"Modified ({len(tracked_changes)} tracked files)"
     _, origin_url = run_command(["git", "remote", "get-url", "origin"])
     _, upstream_url = run_command(["git", "remote", "get-url", "upstream"])
 
@@ -142,13 +145,18 @@ def main() -> int:
         ("fastapi", "FastAPI web framework"),
         ("starlette", "ASGI toolkit"),
         ("uvicorn", "ASGI server"),
+        ("websockets", "WebSocket protocol"),
         ("reportlab", "PDF generation"),
         ("pytest", "Test runner"),
         ("httpx", "HTTP client / TestClient"),
         ("pydantic", "Data validation"),
     ]
     specs = declared_requirements()
-    dep_results = [audit_dependency(pkg, desc, specs) for pkg, desc in packages]
+    desc_map = dict(packages)
+    # Audit every dependency declared in requirements.txt plus the known extras,
+    # so no declared bound is silently skipped.
+    audit_names = list(dict.fromkeys(list(specs.keys()) + [pkg for pkg, _ in packages]))
+    dep_results = [audit_dependency(name, desc_map.get(name, "dependency"), specs) for name in audit_names]
     for pkg, ver, _desc, res in dep_results:
         if res.startswith("FAIL"):
             record_failure(f"dependency `{pkg}` {res}")
@@ -208,7 +216,7 @@ def main() -> int:
     report = f"""# System Verification & Basic Checks Record
 
 **Generated:** {check_time}  
-**Commit:** `{git_head}` on branch `{git_branch}`  
+**Base Revision:** `{git_head}` on branch `{git_branch}` (checks ran against this revision plus the working tree; this record is not part of the revision it describes)  
 **Repository State:** {git_clean}  
 
 ---
@@ -290,7 +298,7 @@ A `WARN` means the installed version is missing a declared bound or falls outsid
 1. All Python core dependencies for the web dashboard and report generator are importable; any version-bound mismatches are reported as `WARN` in section 3.
 2. The dashboard test suite (`dashboard/test_dashboard.py`) passes.
 3. Synthetic test traffic generation functions cleanly.
-4. The tracked codebase files checked above are present and intact.
+4. The tracked codebase files checked above are present (existence only, not content integrity).
 """
 
     record_path = ROOT_DIR / "SYSTEM_CHECK.md"
