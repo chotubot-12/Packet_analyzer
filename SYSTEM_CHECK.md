@@ -1,8 +1,8 @@
 # System Verification & Basic Checks Record
 
-**Generated:** 2026-10-05 18:09:22 UTC  
-**Commit:** `2520989` on branch `record/system-verification-check`  
-**Repository State:** Clean (0 tracked modifications)  
+**Generated:** 2026-10-08 05:47:35 UTC  
+**Commit:** `557e6fb` on branch `pr-7`  
+**Repository State:** Modified (2 tracked files)  
 
 ---
 
@@ -11,8 +11,8 @@
 | Attribute | Value | Status |
 |---|---|---|
 | **Operating System** | Windows 10 (AMD64) | PASS |
-| **Python Runtime** | Python 3.11.9 | PASS |
-| **Python Binary** | `C:\Users\hp\AppData\Local\Programs\Python\Python311\python.exe` | PASS |
+| **Python Runtime** | Python 3.10.10 | PASS |
+| **Python Binary** | `C:\Users\evilt\AppData\Local\Programs\Python\Python310\python.exe` | PASS |
 | **Build System (Meson)** | Installed | PASS |
 | **Build Backend (Ninja)** | Installed | PASS |
 | **C++ Toolchain** | None found in PATH (native build requires MSVC/GCC) | INFO |
@@ -23,26 +23,30 @@
 
 | Remote | URL |
 |---|---|
-| **origin** | `https://github.com/singhanurag0317-bit/Packet_analyzer.git` |
-| **upstream** | `https://github.com/namann5/Packet_analyzer.git` |
+| **origin** | `https://github.com/namann5/Packet_analyzer.git` |
+| **upstream** | `error: No such remote 'upstream'` |
 
-- **Current Branch:** `record/system-verification-check`
-- **Working Tree:** Clean (0 tracked modifications)
-- **Baseline Alignment:** Synchronized with `upstream/main`
+- **Current Branch:** `pr-7`
+- **Working Tree:** Modified (2 tracked files)
+- **Baseline Alignment:** Not verified by this script (compare against `upstream/main` manually)
 
 ---
 
 ## 3. Dependency Audit (Dashboard & Testing)
 
+Detected versions are checked against the bounds declared in `dashboard/requirements.txt`.
+A `WARN` means the installed version is missing a declared bound or falls outside it;
+`FAIL` means the package is not importable.
+
 | Package | Detected Version | Purpose | Audit Result |
 |---|---|---|---|
-| `fastapi` | 0.141.1 | FastAPI web framework | PASS |
-| `starlette` | 1.5.0 | ASGI toolkit | PASS |
-| `uvicorn` | 0.52.1 | ASGI server | PASS |
-| `reportlab` | 5.0.1 | PDF generation | PASS |
-| `pytest` | 9.1.1 | Test runner | PASS |
-| `httpx` | 0.28.1 | HTTP client / TestClient | PASS |
-| `pydantic` | 2.13.4 | Data validation | PASS |
+| `fastapi` | 0.139.2 (declared >=0.109.0,<1.0.0) | FastAPI web framework | PASS |
+| `starlette` | 1.3.1 | ASGI toolkit | WARN (no declared bound) |
+| `uvicorn` | 0.30.0 (declared >=0.27.0,<1.0.0) | ASGI server | PASS |
+| `reportlab` | 4.5.1 (declared >=4.0.0,<5.0.0) | PDF generation | PASS |
+| `pytest` | 9.0.3 (declared >=8.0.0,<9.0.0) | Test runner | WARN (outside declared bounds) |
+| `httpx` | 0.27.0 (declared >=0.27.0,<0.28.0) | HTTP client / TestClient | PASS |
+| `pydantic` | 2.9.2 | Data validation | WARN (no declared bound) |
 
 ---
 
@@ -62,12 +66,12 @@
 ```text
 ................                                                         [100%]
 ============================== warnings summary ===============================
-C:\Users\hp\AppData\Local\Programs\Python\Python311\Lib\site-packages\fastapi\testclient.py:1
-  C:\Users\hp\AppData\Local\Programs\Python\Python311\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+..\..\..\AppData\Local\Programs\Python\Python310\lib\site-packages\fastapi\testclient.py:1
+  C:\Users\evilt\AppData\Local\Programs\Python\Python310\lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
     from starlette.testclient import TestClient as TestClient  # noqa
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-16 passed, 1 warning in 1.56s
+16 passed, 1 warning in 0.91s
 ```
 
 ---
@@ -75,8 +79,7 @@ C:\Users\hp\AppData\Local\Programs\Python\Python311\Lib\site-packages\fastapi\te
 ## 6. Record Status
 
 This system check record verifies that:
-1. All Python core dependencies for the web dashboard and report generator are installed.
-2. The FastAPI server, WebSocket endpoints, REST routes, and report generators (HTML & PDF) function as expected.
-3. IPC schema framing, packet ingestion, and anomaly detection handlers pass 100% of test specifications.
-4. Synthetic test traffic generation functions cleanly.
-5. The local workspace is verified, healthy, and recorded.
+1. All Python core dependencies for the web dashboard and report generator are importable; any version-bound mismatches are reported as `WARN` in section 3.
+2. The dashboard test suite (`dashboard/test_dashboard.py`) passes.
+3. Synthetic test traffic generation functions cleanly.
+4. The tracked codebase files checked above are present and intact.
