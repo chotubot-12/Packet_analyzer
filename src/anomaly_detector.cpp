@@ -23,6 +23,9 @@ std::string ipToString(uint32_t ip) {
 
 } // namespace
 
+AnomalyDetector::AnomalyDetector() : AnomalyDetector(Config()) {
+}
+
 AnomalyDetector::AnomalyDetector(const Config& config)
     : config_(config) {
 }
@@ -144,6 +147,12 @@ bool AnomalyDetector::processPacket(const PacketJob& job) {
 bool AnomalyDetector::checkPortScan(uint32_t src_ip, uint32_t dst_ip, uint16_t dst_port, double now_sec) {
     std::lock_guard<std::mutex> lock(port_scan_mutex_);
 
+    // A zero cap disables port-scan tracking entirely; avoid an unbounded
+    // structure and the empty-LRU eviction path below.
+    if (config_.port_scan_max_entries == 0) {
+        return false;
+    }
+
     PortScanKey key{src_ip, dst_ip};
 
     // Update LRU tracking
@@ -151,7 +160,7 @@ bool AnomalyDetector::checkPortScan(uint32_t src_ip, uint32_t dst_ip, uint16_t d
     if (lru_it != port_scan_lru_map_.end()) {
         port_scan_lru_.erase(lru_it->second);
     } else {
-        if (port_scan_map_.size() >= config_.port_scan_max_entries) {
+        if (port_scan_map_.size() >= config_.port_scan_max_entries && !port_scan_lru_.empty()) {
             // Evict oldest
             PortScanKey oldest = port_scan_lru_.back();
             port_scan_lru_.pop_back();
@@ -185,7 +194,6 @@ bool AnomalyDetector::checkPortScan(uint32_t src_ip, uint32_t dst_ip, uint16_t d
         bool should_alert = (now_sec - entry.last_alert_time >= config_.port_scan_alert_cooldown);
         if (should_alert) {
             entry.last_alert_time = now_sec;
-            entry.is_alerted = true;
 
             AnomalyEvent event;
             event.timestamp = now_sec;
@@ -206,7 +214,7 @@ bool AnomalyDetector::checkPortScan(uint32_t src_ip, uint32_t dst_ip, uint16_t d
                 auto_blocked_ips_.insert(src_ip);
             }
         }
-        return true; // Drop packet
+        return config_.auto_block_port_scans; // Drop packet only if auto-block enabled
     }
 
     return false;
@@ -215,12 +223,18 @@ bool AnomalyDetector::checkPortScan(uint32_t src_ip, uint32_t dst_ip, uint16_t d
 bool AnomalyDetector::checkSYNFlood(uint32_t dst_ip, double now_sec) {
     std::lock_guard<std::mutex> lock(syn_flood_mutex_);
 
+    // A zero cap disables SYN-flood tracking entirely; avoid the empty-LRU
+    // eviction path below.
+    if (config_.syn_flood_max_entries == 0) {
+        return false;
+    }
+
     // Update LRU tracking
     auto lru_it = syn_flood_lru_map_.find(dst_ip);
     if (lru_it != syn_flood_lru_map_.end()) {
         syn_flood_lru_.erase(lru_it->second);
     } else {
-        if (syn_flood_map_.size() >= config_.syn_flood_max_entries) {
+        if (syn_flood_map_.size() >= config_.syn_flood_max_entries && !syn_flood_lru_.empty()) {
             uint32_t oldest = syn_flood_lru_.back();
             syn_flood_lru_.pop_back();
             syn_flood_lru_map_.erase(oldest);
@@ -251,7 +265,6 @@ bool AnomalyDetector::checkSYNFlood(uint32_t dst_ip, double now_sec) {
         bool should_alert = (now_sec - entry.last_alert_time >= config_.syn_flood_alert_cooldown);
         if (should_alert) {
             entry.last_alert_time = now_sec;
-            entry.is_alerted = true;
 
             AnomalyEvent event;
             event.timestamp = now_sec;
@@ -311,6 +324,26 @@ bool AnomalyDetector::inspectDNSQuery(const PacketJob& job, const std::string& q
     if (should_alert) {
         dns_tunnel_seen_[key] = now_sec;
         unique_tunnel_domains_.insert(query);
+
+        // Bound the tunneling state so a long-running capture cannot grow it
+        // without limit. Prune stale entries, then evict oldest by insertion.
+        if (config_.dns_tunnel_max_entries > 0) {
+            if (dns_tunnel_seen_.size() > config_.dns_tunnel_max_entries) {
+                for (auto it2 = dns_tunnel_seen_.begin(); it2 != dns_tunnel_seen_.end();) {
+                    if (now_sec - it2->second >= config_.dns_tunnel_cooldown) {
+                        it2 = dns_tunnel_seen_.erase(it2);
+                    } else {
+                        ++it2;
+                    }
+                }
+                while (dns_tunnel_seen_.size() > config_.dns_tunnel_max_entries) {
+                    dns_tunnel_seen_.erase(dns_tunnel_seen_.begin());
+                }
+            }
+            while (unique_tunnel_domains_.size() > config_.dns_tunnel_max_entries) {
+                unique_tunnel_domains_.erase(unique_tunnel_domains_.begin());
+            }
+        }
 
         AnomalyEvent event;
         event.timestamp = now_sec;

@@ -69,7 +69,10 @@ bool DPIEngine::initialize() {
 
     // Open events file if specified
     if (!config_.events_output_file.empty()) {
-        EventSink::instance().openFile(config_.events_output_file);
+        if (!EventSink::instance().openFile(config_.events_output_file)) {
+            std::cerr << "[DPIEngine] Warning: could not open events output file: "
+                      << config_.events_output_file << "\n";
+        }
     }
 
     // Create IPC emitter if enabled
@@ -98,7 +101,8 @@ bool DPIEngine::initialize() {
         blocklist_.get(),
         vpn_detector_.get(),
         ipc_emitter_.get(),
-        &stats_
+        &stats_,
+        config_.block_malicious
     );
     
     // Create LB manager (creates LB threads, connects to FP queues)

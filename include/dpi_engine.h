@@ -67,7 +67,7 @@ public:
         bool verbose = false;
 
         // Track B: Security configuration
-        std::string blocklist_file{"data/urlhaus_sample.txt"};
+        std::string blocklist_file{"data/urlhaus_test_sample.txt"};
         bool download_urlhaus = false;
         std::string vpn_ranges_file{"data/vpn_ranges.json"};
         bool block_malicious = true;

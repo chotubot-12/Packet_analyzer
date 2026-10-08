@@ -80,6 +80,43 @@ bool parsePort(const std::string& str, uint16_t& out_port) {
     return false;
 }
 
+// Parse a non-negative decimal integer without throwing.
+bool parseULong(const std::string& str, unsigned long& out) {
+    if (str.empty()) return false;
+    for (char c : str) {
+        if (c < '0' || c > '9') return false;
+    }
+    try {
+        size_t idx = 0;
+        unsigned long val = std::stoul(str, &idx);
+        if (idx != str.size()) return false;
+        out = val;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+// Parse a signed decimal integer without throwing.
+bool parseInt(const std::string& str, int& out) {
+    if (str.empty()) return false;
+    size_t i = 0;
+    if (str[0] == '-' || str[0] == '+') i = 1;
+    if (i == str.size()) return false;
+    for (size_t j = i; j < str.size(); ++j) {
+        if (str[j] < '0' || str[j] > '9') return false;
+    }
+    try {
+        size_t idx = 0;
+        int val = std::stoi(str, &idx);
+        if (idx != str.size()) return false;
+        out = val;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -189,15 +226,35 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--no-block-malicious") {
             config.block_malicious = false;
         } else if (arg == "--port-scan-thresh" && i + 1 < argc) {
-            config.port_scan_threshold = std::stoul(argv[++i]);
+            unsigned long v = 0;
+            if (!parseULong(argv[++i], v)) {
+                std::cerr << "Invalid value for --port-scan-thresh: " << argv[i] << "\n";
+                return 1;
+            }
+            config.port_scan_threshold = static_cast<size_t>(v);
         } else if (arg == "--syn-flood-thresh" && i + 1 < argc) {
-            config.syn_flood_threshold = std::stoul(argv[++i]);
+            unsigned long v = 0;
+            if (!parseULong(argv[++i], v)) {
+                std::cerr << "Invalid value for --syn-flood-thresh: " << argv[i] << "\n";
+                return 1;
+            }
+            config.syn_flood_threshold = static_cast<size_t>(v);
         } else if (arg == "--events-out" && i + 1 < argc) {
             config.events_output_file = argv[++i];
         } else if (arg == "--lbs" && i + 1 < argc) {
-            config.num_load_balancers = std::stoi(argv[++i]);
+            int v = 0;
+            if (!parseInt(argv[++i], v) || v <= 0) {
+                std::cerr << "Invalid value for --lbs (must be a positive integer): " << argv[i] << "\n";
+                return 1;
+            }
+            config.num_load_balancers = v;
         } else if (arg == "--fps" && i + 1 < argc) {
-            config.fps_per_lb = std::stoi(argv[++i]);
+            int v = 0;
+            if (!parseInt(argv[++i], v) || v <= 0) {
+                std::cerr << "Invalid value for --fps (must be a positive integer): " << argv[i] << "\n";
+                return 1;
+            }
+            config.fps_per_lb = v;
         } else if (arg == "--verbose") {
             config.verbose = true;
         } else if (arg == "--help" || arg == "-h") {

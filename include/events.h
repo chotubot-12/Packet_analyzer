@@ -78,8 +78,8 @@ public:
     SecurityStats& getStats() { return stats_; }
     const SecurityStats& getStats() const { return stats_; }
 
-    void setConsoleAlerts(bool enable) { console_alerts_ = enable; }
-    bool consoleAlertsEnabled() const { return console_alerts_; }
+    void setConsoleAlerts(bool enable) { console_alerts_.store(enable); }
+    bool consoleAlertsEnabled() const { return console_alerts_.load(); }
 
 private:
     EventSink() = default;
@@ -89,7 +89,7 @@ private:
     EventCallback callback_;
     std::ofstream outfile_;
     SecurityStats stats_;
-    bool console_alerts_{true};
+    std::atomic<bool> console_alerts_{true};
 };
 
 } // namespace DPI

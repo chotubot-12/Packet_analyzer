@@ -1,5 +1,5 @@
 #include <iostream>
-#include <cassert>
+#include <cstdlib>
 #include <cmath>
 #include <vector>
 #include <string>
@@ -11,23 +11,36 @@
 
 using namespace DPI;
 
+// Custom check that is always active, even in release builds (the standard
+// assert() macro is compiled out under NDEBUG, silently disabling all checks).
+static int g_failures = 0;
+
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            std::cerr << "  FAIL: " << #cond << " (" << __FILE__ << ":"        \
+                      << __LINE__ << ")\n";                                    \
+            ++g_failures;                                                      \
+        }                                                                      \
+    } while (0)
+
 void testShannonEntropy() {
     std::cout << "[TEST] Shannon Entropy...\n";
     // Empty string
-    assert(AnomalyDetector::calculateShannonEntropy("") == 0.0);
+    CHECK(AnomalyDetector::calculateShannonEntropy("") == 0.0);
 
     // Uniform string: all same char has 0 entropy
-    assert(AnomalyDetector::calculateShannonEntropy("aaaaaaa") == 0.0);
+    CHECK(AnomalyDetector::calculateShannonEntropy("aaaaaaa") == 0.0);
 
     // Two equal characters: -2 * (0.5 * log2(0.5)) = 1.0
     double e2 = AnomalyDetector::calculateShannonEntropy("ab");
-    assert(std::abs(e2 - 1.0) < 0.001);
+    CHECK(std::abs(e2 - 1.0) < 0.001);
 
     // High entropy random hex/base64 string
     std::string high_entropy = "a9f8b7c6d5e4f3a2b1c0d9e8f7a6b5c4";
     double e_high = AnomalyDetector::calculateShannonEntropy(high_entropy);
     std::cout << "  Entropy of hex payload: " << e_high << "\n";
-    assert(e_high > 3.5);
+    CHECK(e_high > 3.5);
 
     std::cout << "  PASS: Shannon Entropy\n";
 }
@@ -36,12 +49,12 @@ void testDomainDepthAndLabels() {
     std::cout << "[TEST] Domain Depth and Labels...\n";
 
     auto labels = AnomalyDetector::splitDomainLabels("a.b.c.d.example.com");
-    assert(labels.size() == 6);
-    assert(labels[0] == "a");
-    assert(labels[5] == "com");
+    CHECK(labels.size() == 6);
+    CHECK(labels[0] == "a");
+    CHECK(labels[5] == "com");
 
     size_t depth = AnomalyDetector::calculateDomainDepth("data.tunnel.sub.evilcorp.com");
-    assert(depth == 4);
+    CHECK(depth == 4);
 
     std::cout << "  PASS: Domain Depth\n";
 }
@@ -62,12 +75,12 @@ void testDNSTunnelHeuristics() {
     normal_job.ts_usec = 0;
 
     // Normal query (depth 2) -> false
-    assert(!detector.inspectDNSQuery(normal_job, "www.google.com"));
+    CHECK(!detector.inspectDNSQuery(normal_job, "www.google.com"));
 
     // Tunnel query (depth 4, long hex label > 20 chars with high entropy)
     std::string tunnel_query = "a9f8b7c6d5e4f3a2b1c0d9e8f7a6.v1.tunnel.badactor.com";
     bool tunnel_detected = detector.inspectDNSQuery(normal_job, tunnel_query);
-    assert(tunnel_detected);
+    CHECK(tunnel_detected);
 
     std::cout << "  PASS: DNS Tunneling Detection\n";
 }
@@ -93,7 +106,7 @@ void testPortScanDetector() {
         job.tuple.protocol = 6;
         job.ts_sec = 100;
         job.ts_usec = port * 1000;
-        assert(!detector.processPacket(job));
+        CHECK(!detector.processPacket(job));
     }
 
     // 16th port breaches threshold (> 15 distinct ports) -> triggers PORT_SCAN
@@ -107,8 +120,8 @@ void testPortScanDetector() {
     job16.ts_usec = 16000;
 
     bool breach = detector.processPacket(job16);
-    assert(breach);
-    assert(detector.isIPAutoBlocked(attacker_ip));
+    CHECK(breach);
+    CHECK(detector.isIPAutoBlocked(attacker_ip));
 
     std::cout << "  PASS: Port Scan Detection\n";
 }
@@ -150,7 +163,7 @@ void testSYNFloodDetector() {
     trigger_job.ts_usec = 510000;
 
     bool flooded = detector.processPacket(trigger_job);
-    assert(flooded);
+    CHECK(flooded);
 
     std::cout << "  PASS: SYN Flood Detection\n";
 }
@@ -164,20 +177,20 @@ void testBlocklistTrieAndMatching() {
     bl.addDomain("phishing-bank.net");
 
     // Exact matches
-    assert(bl.isBlocked("malicious-domain.com"));
-    assert(bl.isBlocked("evil-c2.org"));
-    assert(bl.isBlocked("phishing-bank.net"));
+    CHECK(bl.isBlocked("malicious-domain.com"));
+    CHECK(bl.isBlocked("evil-c2.org"));
+    CHECK(bl.isBlocked("phishing-bank.net"));
 
     // Subdomain matches via Trie
-    assert(bl.isBlocked("sub.malicious-domain.com"));
-    assert(bl.isBlocked("payload.cdn.evil-c2.org"));
+    CHECK(bl.isBlocked("sub.malicious-domain.com"));
+    CHECK(bl.isBlocked("payload.cdn.evil-c2.org"));
 
     // Unblocked domains
-    assert(!bl.isBlocked("google.com"));
-    assert(!bl.isBlocked("example.com"));
+    CHECK(!bl.isBlocked("google.com"));
+    CHECK(!bl.isBlocked("example.com"));
 
     // URL normalization
-    assert(Blocklist::extractDomainFromURL("https://c2.test.com:8443/api?x=1") == "c2.test.com");
+    CHECK(Blocklist::extractDomainFromURL("https://c2.test.com:8443/api?x=1") == "c2.test.com");
 
     std::cout << "  PASS: Blocklist & Trie Matching\n";
 }
@@ -203,8 +216,8 @@ void testVPNDetection() {
     wg_job.payload_length = wg_data.size();
 
     auto wg_res = vpn.detect(wg_job);
-    assert(wg_res.detected);
-    assert(wg_res.type == VPNType::WIREGUARD);
+    CHECK(wg_res.detected);
+    CHECK(wg_res.type == VPNType::WIREGUARD);
 
     // 2. OpenVPN Reset packet (UDP 1194, opcode 0x38)
     std::vector<uint8_t> ovpn_data = {0x38, 0x01, 0x02, 0x03, 0x04};
@@ -216,22 +229,22 @@ void testVPNDetection() {
     ovpn_job.payload_length = ovpn_data.size();
 
     auto ovpn_res = vpn.detect(ovpn_job);
-    assert(ovpn_res.detected);
-    assert(ovpn_res.type == VPNType::OPENVPN);
+    CHECK(ovpn_res.detected);
+    CHECK(ovpn_res.type == VPNType::OPENVPN);
 
     // 3. IPSec ESP (Protocol 50)
     PacketJob esp_job;
     esp_job.tuple.protocol = 50;
     auto esp_res = vpn.detect(esp_job);
-    assert(esp_res.detected);
-    assert(esp_res.type == VPNType::IPSEC);
+    CHECK(esp_res.detected);
+    CHECK(esp_res.type == VPNType::IPSEC);
 
     // 4. IPSec AH (Protocol 51)
     PacketJob ah_job;
     ah_job.tuple.protocol = 51;
     auto ah_res = vpn.detect(ah_job);
-    assert(ah_res.detected);
-    assert(ah_res.type == VPNType::IPSEC);
+    CHECK(ah_res.detected);
+    CHECK(ah_res.type == VPNType::IPSEC);
 
     // 5. VPN CIDR Range match (10.8.0.50 matching 10.8.0.0/24)
     PacketJob cidr_job;
@@ -240,8 +253,8 @@ void testVPNDetection() {
     cidr_job.tuple.dst_ip = 0x08080808;
     cidr_job.tuple.protocol = 6;
     auto cidr_res = vpn.detect(cidr_job);
-    assert(cidr_res.detected);
-    assert(cidr_res.type == VPNType::VPN_IP_RANGE);
+    CHECK(cidr_res.detected);
+    CHECK(cidr_res.type == VPNType::VPN_IP_RANGE);
 
     std::cout << "  PASS: VPN Detection\n";
 }
@@ -259,6 +272,10 @@ int main() {
     testBlocklistTrieAndMatching();
     testVPNDetection();
 
+    if (g_failures != 0) {
+        std::cerr << "\n" << g_failures << " TRACK B TEST(S) FAILED\n";
+        return 1;
+    }
     std::cout << "\nALL TRACK B UNIT TESTS PASSED SUCCESSFULLY! (7/7)\n";
     return 0;
 }

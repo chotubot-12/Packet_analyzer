@@ -50,7 +50,8 @@ public:
                       Blocklist* blocklist = nullptr,
                       VPNDetector* vpn_detector = nullptr,
                       IPCEmitter* ipc_emitter = nullptr,
-                      DPIStats* engine_stats = nullptr);
+                      DPIStats* engine_stats = nullptr,
+                      bool block_malicious = true);
     
     ~FastPathProcessor();
     
@@ -107,6 +108,9 @@ private:
     // Optional IPC Emitter & Global Engine Stats pointers
     IPCEmitter* ipc_emitter_{nullptr};
     DPIStats* engine_stats_{nullptr};
+
+    // Whether malicious-domain hits should be blocked (--no-block-malicious)
+    bool block_malicious_{true};
     
     // Statistics
     std::atomic<uint64_t> packets_processed_{0};
@@ -127,6 +131,10 @@ private:
     
     // Inspect packet payload for classification
     void inspectPayload(PacketJob& job, Connection* conn);
+
+    // Inspect a DNS payload for tunneling / blocklist hits. Runs for every DNS
+    // packet on a flow (not only the first, unclassified one).
+    void inspectDNSPayload(PacketJob& job, Connection* conn);
     
     // Extract SNI from TLS Client Hello
     bool tryExtractSNI(const PacketJob& job, Connection* conn);
@@ -157,7 +165,8 @@ public:
               Blocklist* blocklist = nullptr,
               VPNDetector* vpn_detector = nullptr,
               IPCEmitter* ipc_emitter = nullptr,
-              DPIStats* engine_stats = nullptr);
+              DPIStats* engine_stats = nullptr,
+              bool block_malicious = true);
     
     ~FPManager();
     

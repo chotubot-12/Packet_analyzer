@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <atomic>
 #include "types.h"
 
 namespace DPI {
@@ -44,7 +45,8 @@ public:
         std::string vpn_ranges_path = "data/vpn_ranges.json";
     };
 
-    explicit VPNDetector(const Config& config = Config());
+    explicit VPNDetector();
+    explicit VPNDetector(const Config& config);
     ~VPNDetector();
 
     // Check packet for VPN protocol fingerprints or known VPN IP ranges
@@ -64,17 +66,21 @@ public:
     bool matchesVPNRange(uint32_t ip, std::string* label = nullptr) const;
 
     const Config& getConfig() const { return config_; }
-    void setConfig(const Config& config) { config_ = config; }
-    void setBlockVPN(bool block) { config_.block_vpn = block; }
+    void setConfig(const Config& config) { config_ = config; block_vpn_.store(config.block_vpn); }
+    void setBlockVPN(bool block) { config_.block_vpn = block; block_vpn_.store(block); }
+
+    // Thread-safe read of the blocking flag (config_ may be mutated concurrently)
+    bool shouldBlockVPN() const { return block_vpn_.load(std::memory_order_relaxed); }
 
     size_t getRangeCount() const;
 
 private:
     Config config_;
+    std::atomic<bool> block_vpn_{false};
     mutable std::mutex mutex_;
     std::vector<CIDRRange> ranges_;
 
-    static uint32_t parseIPv4(const std::string& ip_str);
+    static bool parseIPv4(const std::string& ip_str, uint32_t& out);
     static bool parseCIDR(const std::string& cidr_str, uint32_t& network, uint32_t& mask);
 };
 

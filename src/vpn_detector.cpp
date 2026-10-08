@@ -17,8 +17,12 @@ std::string vpnTypeToString(VPNType type) {
     }
 }
 
+VPNDetector::VPNDetector() : VPNDetector(Config()) {
+}
+
 VPNDetector::VPNDetector(const Config& config)
     : config_(config) {
+    block_vpn_.store(config_.block_vpn);
     if (!config_.vpn_ranges_path.empty()) {
         loadVPNRanges(config_.vpn_ranges_path);
     }
@@ -26,21 +30,36 @@ VPNDetector::VPNDetector(const Config& config)
 
 VPNDetector::~VPNDetector() = default;
 
-uint32_t VPNDetector::parseIPv4(const std::string& ip_str) {
+bool VPNDetector::parseIPv4(const std::string& ip_str, uint32_t& out) {
+    if (ip_str.empty()) return false;
+
     uint32_t ip = 0;
     int octet = 0;
     int shift = 0;
+    int digits = 0;
+    int parts = 0;
+
     for (char c : ip_str) {
         if (c == '.') {
-            ip |= (octet << shift);
+            if (digits == 0 || parts >= 3) return false;
+            ip |= (static_cast<uint32_t>(octet) << shift);
             shift += 8;
             octet = 0;
+            digits = 0;
+            ++parts;
         } else if (c >= '0' && c <= '9') {
             octet = octet * 10 + (c - '0');
+            ++digits;
+            if (octet > 255) return false;
+        } else {
+            return false; // reject any non-digit, non-dot character
         }
     }
-    ip |= (octet << shift);
-    return ip;
+
+    if (digits == 0 || parts != 3) return false;
+    ip |= (static_cast<uint32_t>(octet) << shift);
+    out = ip;
+    return true;
 }
 
 bool VPNDetector::parseCIDR(const std::string& cidr_str, uint32_t& network, uint32_t& mask) {
@@ -52,12 +71,25 @@ bool VPNDetector::parseCIDR(const std::string& cidr_str, uint32_t& network, uint
     std::string ip_part = cidr_str.substr(0, slash);
     std::string prefix_part = cidr_str.substr(slash + 1);
 
-    int prefix_len = std::stoi(prefix_part);
-    if (prefix_len < 0 || prefix_len > 32) {
+    // Parse prefix without exceptions; reject empty/oversized/non-numeric input.
+    if (prefix_part.empty() || prefix_part.size() > 2) {
+        return false;
+    }
+    int prefix_len = 0;
+    for (char c : prefix_part) {
+        if (c < '0' || c > '9') {
+            return false;
+        }
+        prefix_len = prefix_len * 10 + (c - '0');
+    }
+    if (prefix_len > 32) {
         return false;
     }
 
-    uint32_t base_ip = parseIPv4(ip_part);
+    uint32_t base_ip = 0;
+    if (!parseIPv4(ip_part, base_ip)) {
+        return false;
+    }
 
     // Calculate mask in host order, then convert to network-compatible byte representation
     // Since our FiveTuple IPs are in little-endian byte order (as parsed in createPacketJob)
@@ -97,11 +129,8 @@ bool VPNDetector::addCIDR(const std::string& cidr_str, const std::string& label)
 bool VPNDetector::loadVPNRanges(const std::string& filepath) {
     std::ifstream file(filepath);
     if (!file.is_open()) {
-        // Fallback default sample VPN ranges
-        addCIDR("10.8.0.0/24", "OpenVPN Subnet");
-        addCIDR("10.13.13.0/24", "WireGuard Subnet");
-        addCIDR("198.51.100.0/24", "Commercial VPN Range");
-        addCIDR("185.220.101.0/24", "VPN Gateway");
+        std::cerr << "[VPNDetector] Could not open VPN ranges file: " << filepath
+                  << " (no ranges loaded)\n";
         return false;
     }
 
@@ -239,7 +268,8 @@ bool VPNDetector::isOpenVPN(const PacketJob& job, std::string* detail) {
     // 0x48 = P_DATA_V2 (opcode 9)
     if (op_raw == 0x38 || op_raw == 0x40 || op_raw == 0x08 ||
         op_raw == 0x18 || op_raw == 0x20 || op_raw == 0x28 ||
-        opcode == 7 || opcode == 8 || opcode == 1) {
+        op_raw == 0x30 || op_raw == 0x48 ||
+        opcode == 1 || opcode == 6 || opcode == 7 || opcode == 8 || opcode == 9) {
         
         if (detail) {
             std::ostringstream ss;

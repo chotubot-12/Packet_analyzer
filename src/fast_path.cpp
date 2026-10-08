@@ -18,7 +18,8 @@ FastPathProcessor::FastPathProcessor(int fp_id,
                                      Blocklist* blocklist,
                                      VPNDetector* vpn_detector,
                                      IPCEmitter* ipc_emitter,
-                                     DPIStats* engine_stats)
+                                     DPIStats* engine_stats,
+                                     bool block_malicious)
     : fp_id_(fp_id),
       input_queue_(10000),
       conn_tracker_(fp_id),
@@ -28,7 +29,8 @@ FastPathProcessor::FastPathProcessor(int fp_id,
       vpn_detector_(vpn_detector),
       output_callback_(std::move(output_callback)),
       ipc_emitter_(ipc_emitter),
-      engine_stats_(engine_stats) {
+      engine_stats_(engine_stats),
+      block_malicious_(block_malicious) {
 }
 
 FastPathProcessor::~FastPathProcessor() {
@@ -100,27 +102,38 @@ PacketAction FastPathProcessor::processPacket(PacketJob& job) {
         if (vpn_res.detected) {
             Connection* conn = conn_tracker_.getOrCreateConnection(job.tuple);
             if (conn) {
-                switch (vpn_res.type) {
-                    case VPNType::WIREGUARD: conn->app_type = AppType::WIREGUARD; break;
-                    case VPNType::OPENVPN:   conn->app_type = AppType::OPENVPN; break;
-                    case VPNType::IPSEC:     conn->app_type = AppType::IPSEC; break;
-                    default:                 conn->app_type = AppType::VPN_GENERIC; break;
+                bool already_vpn = (conn->app_type == AppType::WIREGUARD ||
+                                    conn->app_type == AppType::OPENVPN ||
+                                    conn->app_type == AppType::IPSEC ||
+                                    conn->app_type == AppType::VPN_GENERIC);
+
+                // Classify + alert only on the first detection for this flow,
+                // so VPN_DETECTED is not re-emitted for every tunneled packet.
+                if (!already_vpn && conn->state != ConnectionState::BLOCKED) {
+                    AppType vpn_app = AppType::VPN_GENERIC;
+                    switch (vpn_res.type) {
+                        case VPNType::WIREGUARD: vpn_app = AppType::WIREGUARD; break;
+                        case VPNType::OPENVPN:   vpn_app = AppType::OPENVPN; break;
+                        case VPNType::IPSEC:     vpn_app = AppType::IPSEC; break;
+                        default:                 vpn_app = AppType::VPN_GENERIC; break;
+                    }
+                    conn_tracker_.classifyConnection(conn, vpn_app, vpn_res.protocol_name);
+
+                    SecurityAlert alert;
+                    alert.timestamp = job.ts_sec + static_cast<double>(job.ts_usec) / 1000000.0;
+                    alert.alert_type = "VPN_DETECTED";
+                    alert.tuple = job.tuple;
+                    alert.app_or_domain = vpn_res.protocol_name;
+                    alert.blocked = vpn_detector_->shouldBlockVPN();
+                    alert.reason = "VPN_DETECTED";
+                    alert.detail = vpn_res.detail;
+                    EventSink::instance().emitAlert(alert);
                 }
-            }
 
-            SecurityAlert alert;
-            alert.timestamp = job.ts_sec + static_cast<double>(job.ts_usec) / 1000000.0;
-            alert.alert_type = "VPN_DETECTED";
-            alert.tuple = job.tuple;
-            alert.app_or_domain = vpn_res.protocol_name;
-            alert.blocked = vpn_detector_->getConfig().block_vpn;
-            alert.reason = "VPN_DETECTED";
-            alert.detail = vpn_res.detail;
-            EventSink::instance().emitAlert(alert);
-
-            if (vpn_detector_->getConfig().block_vpn) {
-                if (conn) conn_tracker_.blockConnection(conn);
-                return PacketAction::DROP;
+                if (vpn_detector_->shouldBlockVPN()) {
+                    conn_tracker_.blockConnection(conn);
+                    return PacketAction::DROP;
+                }
             }
         }
     }
@@ -145,7 +158,18 @@ PacketAction FastPathProcessor::processPacket(PacketJob& job) {
     if (conn->state == ConnectionState::BLOCKED) {
         return PacketAction::DROP;
     }
-    
+
+    // Track B: DNS security checks (tunneling + blocklist) must run for every
+    // DNS payload on the flow, not only the first, unclassified query.
+    if (job.payload_length > 0 &&
+        (job.tuple.dst_port == 53 || job.tuple.src_port == 53)) {
+        inspectDNSPayload(job, conn);
+    }
+
+    if (conn->state == ConnectionState::BLOCKED) {
+        return PacketAction::DROP;
+    }
+
     bool was_classified = (conn->state == ConnectionState::CLASSIFIED);
 
     // If connection not yet classified, try to inspect payload
@@ -186,46 +210,56 @@ void FastPathProcessor::inspectPayload(PacketJob& job, Connection* conn) {
     if (tryExtractHTTPHost(job, conn)) {
         return;
     }
-    
-    // Check for DNS (port 53)
-    if (job.tuple.dst_port == 53 || job.tuple.src_port == 53) {
-        auto domain = DNSExtractor::extractQuery(payload, job.payload_length);
-        if (domain) {
-            conn_tracker_.classifyConnection(conn, AppType::DNS, *domain);
 
-            // Track B: DNS Tunneling Heuristics
-            if (anomaly_detector_) {
-                anomaly_detector_->inspectDNSQuery(job, *domain);
-            }
-
-            // Track B: Malicious Domain Blocklist (URLhaus)
-            if (blocklist_) {
-                std::string matched_rule;
-                if (blocklist_->isBlocked(*domain, &matched_rule)) {
-                    conn_tracker_.blockConnection(conn);
-                    SecurityAlert alert;
-                    alert.timestamp = job.ts_sec + static_cast<double>(job.ts_usec) / 1000000.0;
-                    alert.alert_type = "MALICIOUS";
-                    alert.tuple = job.tuple;
-                    alert.app_or_domain = *domain;
-                    alert.blocked = true;
-                    alert.reason = "MALICIOUS";
-                    alert.detail = "Matched URLhaus rule: " + matched_rule;
-                    EventSink::instance().emitAlert(alert);
-                }
-            }
-            if (engine_stats_) engine_stats_->app_counts[static_cast<size_t>(AppType::DNS)]++;
-            return;
-        }
-    }
-    
-    // Basic port-based classification as fallback
+    // DNS handling lives in inspectDNSPayload(), invoked for every DNS packet
+    // from processPacket(). Basic port-based classification as fallback:
     if (job.tuple.dst_port == 80) {
         conn_tracker_.classifyConnection(conn, AppType::HTTP, "");
         if (engine_stats_) engine_stats_->app_counts[static_cast<size_t>(AppType::HTTP)]++;
     } else if (job.tuple.dst_port == 443) {
         conn_tracker_.classifyConnection(conn, AppType::HTTPS, "");
         if (engine_stats_) engine_stats_->app_counts[static_cast<size_t>(AppType::HTTPS)]++;
+    }
+}
+
+void FastPathProcessor::inspectDNSPayload(PacketJob& job, Connection* conn) {
+    if (job.payload_length == 0 || job.payload_offset >= job.data.size()) {
+        return;
+    }
+
+    const uint8_t* payload = job.data.data() + job.payload_offset;
+    auto domain = DNSExtractor::extractQuery(payload, job.payload_length);
+    if (!domain) {
+        return;
+    }
+
+    bool first_classification = (conn->state != ConnectionState::CLASSIFIED);
+    conn_tracker_.classifyConnection(conn, AppType::DNS, *domain);
+
+    // Track B: DNS Tunneling Heuristics (run for every query on the flow)
+    if (anomaly_detector_) {
+        anomaly_detector_->inspectDNSQuery(job, *domain);
+    }
+
+    // Track B: Malicious Domain Blocklist (URLhaus)
+    if (blocklist_ && block_malicious_) {
+        std::string matched_rule;
+        if (blocklist_->isBlocked(*domain, &matched_rule)) {
+            conn_tracker_.blockConnection(conn);
+            SecurityAlert alert;
+            alert.timestamp = job.ts_sec + static_cast<double>(job.ts_usec) / 1000000.0;
+            alert.alert_type = "MALICIOUS";
+            alert.tuple = job.tuple;
+            alert.app_or_domain = *domain;
+            alert.blocked = true;
+            alert.reason = "MALICIOUS";
+            alert.detail = "Matched URLhaus rule: " + matched_rule;
+            EventSink::instance().emitAlert(alert);
+        }
+    }
+
+    if (first_classification && engine_stats_) {
+        engine_stats_->app_counts[static_cast<size_t>(AppType::DNS)]++;
     }
 }
 
@@ -249,7 +283,7 @@ bool FastPathProcessor::tryExtractSNI(const PacketJob& job, Connection* conn) {
         conn_tracker_.classifyConnection(conn, app, *sni);
 
         // Track B: Malicious Domain Blocklist (URLhaus) on TLS SNI
-        if (blocklist_) {
+        if (blocklist_ && block_malicious_) {
             std::string matched_rule;
             if (blocklist_->isBlocked(*sni, &matched_rule)) {
                 conn_tracker_.blockConnection(conn);
@@ -293,7 +327,7 @@ bool FastPathProcessor::tryExtractHTTPHost(const PacketJob& job, Connection* con
         conn_tracker_.classifyConnection(conn, app, *host);
 
         // Track B: Malicious Domain Blocklist (URLhaus) on HTTP Host
-        if (blocklist_) {
+        if (blocklist_ && block_malicious_) {
             std::string matched_rule;
             if (blocklist_->isBlocked(*host, &matched_rule)) {
                 conn_tracker_.blockConnection(conn);
@@ -444,12 +478,14 @@ FPManager::FPManager(int num_fps,
                      Blocklist* blocklist,
                      VPNDetector* vpn_detector,
                      IPCEmitter* ipc_emitter,
-                     DPIStats* engine_stats) {
+                     DPIStats* engine_stats,
+                     bool block_malicious) {
     
     // Create FP processors (each has its own input queue)
     for (int i = 0; i < num_fps; i++) {
         auto fp = std::make_unique<FastPathProcessor>(
-            i, rule_manager, output_callback, anomaly_detector, blocklist, vpn_detector, ipc_emitter, engine_stats);
+            i, rule_manager, output_callback, anomaly_detector, blocklist, vpn_detector,
+            ipc_emitter, engine_stats, block_malicious);
         fps_.push_back(std::move(fp));
     }
     

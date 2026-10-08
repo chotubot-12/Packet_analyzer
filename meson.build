@@ -90,22 +90,24 @@ dpi_cli = executable(
 )
 
 # ---------------------------------------------------------------------------
-# Track B Unit & Integration test binary
+# Track B Unit & Integration test binary (only built when tests are enabled)
 # ---------------------------------------------------------------------------
-test_track_b = executable(
-  'test_track_b',
-  files(
-    'src/test_track_b.cpp',
-    'src/anomaly_detector.cpp',
-    'src/blocklist.cpp',
-    'src/vpn_detector.cpp',
-    'src/events.cpp',
-    'src/types.cpp',
-    'src/packet_parser.cpp',
-  ),
-  dependencies: [thread_dep] + win_deps,
-  include_directories: include_directories('include'),
-)
+if get_option('tests')
+  test_track_b = executable(
+    'test_track_b',
+    files(
+      'src/test_track_b.cpp',
+      'src/anomaly_detector.cpp',
+      'src/blocklist.cpp',
+      'src/vpn_detector.cpp',
+      'src/events.cpp',
+      'src/types.cpp',
+      'src/packet_parser.cpp',
+    ),
+    dependencies: [thread_dep] + win_deps,
+    include_directories: include_directories('include'),
+  )
+endif
 
 # ---------------------------------------------------------------------------
 # Simple packet viewer (baseline tool)

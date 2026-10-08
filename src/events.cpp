@@ -8,22 +8,78 @@ namespace DPI {
 namespace {
 
 std::string escapeJSON(const std::string& input) {
-    std::ostringstream ss;
-    for (char c : input) {
-        if (c == '"') ss << "\\\"";
-        else if (c == '\\') ss << "\\\\";
-        else if (c == '\b') ss << "\\b";
-        else if (c == '\f') ss << "\\f";
-        else if (c == '\n') ss << "\\n";
-        else if (c == '\r') ss << "\\r";
-        else if (c == '\t') ss << "\\t";
-        else if (static_cast<unsigned char>(c) < 0x20) {
-            ss << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(c);
+    static const char* hexd = "0123456789abcdef";
+    const unsigned char* s = reinterpret_cast<const unsigned char*>(input.data());
+    const size_t n = input.size();
+
+    std::string out;
+    out.reserve(n);
+
+    size_t i = 0;
+    while (i < n) {
+        unsigned char c = s[i];
+        if (c == '"')       { out += "\\\""; ++i; }
+        else if (c == '\\') { out += "\\\\"; ++i; }
+        else if (c == '\b') { out += "\\b";  ++i; }
+        else if (c == '\f') { out += "\\f";  ++i; }
+        else if (c == '\n') { out += "\\n";  ++i; }
+        else if (c == '\r') { out += "\\r";  ++i; }
+        else if (c == '\t') { out += "\\t";  ++i; }
+        else if (c < 0x20) {
+            out += "\\u00";
+            out += hexd[(c >> 4) & 0xF];
+            out += hexd[c & 0xF];
+            ++i;
+        } else if (c < 0x80) {
+            out += static_cast<char>(c);
+            ++i;
         } else {
-            ss << c;
+            // Validate a UTF-8 multi-byte sequence; escape invalid/lone bytes
+            // so malformed input still yields valid JSON.
+            int len = 0;
+            if ((c & 0xE0) == 0xC0) len = 2;
+            else if ((c & 0xF0) == 0xE0) len = 3;
+            else if ((c & 0xF8) == 0xF0) len = 4;
+
+            bool valid = (len > 0) && (i + static_cast<size_t>(len) <= n);
+            if (valid) {
+                for (int k = 1; k < len; ++k) {
+                    if ((s[i + k] & 0xC0) != 0x80) { valid = false; break; }
+                }
+                if (valid && len == 2 && c < 0xC2) valid = false;                 // overlong
+                if (valid && len == 3 && c == 0xE0 && s[i + 1] < 0xA0) valid = false;
+                if (valid && len == 3 && c == 0xED && s[i + 1] >= 0xA0) valid = false;
+                if (valid && len == 4 && c == 0xF0 && s[i + 1] < 0x90) valid = false;
+                if (valid && len == 4 && c == 0xF4 && s[i + 1] >= 0x90) valid = false;
+            }
+
+            if (valid) {
+                out.append(reinterpret_cast<const char*>(s + i), static_cast<size_t>(len));
+                i += static_cast<size_t>(len);
+            } else {
+                out += "\\u00";
+                out += hexd[(c >> 4) & 0xF];
+                out += hexd[c & 0xF];
+                ++i;
+            }
         }
     }
-    return ss.str();
+    return out;
+}
+
+// Replace terminal control characters so untrusted fields cannot inject
+// escape sequences into the console.
+std::string sanitizeForConsole(const std::string& input) {
+    std::string out;
+    out.reserve(input.size());
+    for (unsigned char c : input) {
+        if (c < 0x20 || c == 0x7F) {
+            out += '?';
+        } else {
+            out += static_cast<char>(c);
+        }
+    }
+    return out;
 }
 
 std::string ipToStr(uint32_t ip) {
@@ -143,11 +199,11 @@ void EventSink::emitAnomaly(const AnomalyEvent& event) {
     std::string json = event.toJSON();
     emitRawJSON(json);
 
-    if (console_alerts_) {
+    if (console_alerts_.load()) {
         std::cout << "\033[1;31m[ALERT] " << anomalyTypeToString(event.type)
-                  << " detected from " << event.src_ip
-                  << " -> " << event.target_ip
-                  << " (" << event.detail << ")\033[0m\n";
+                  << " detected from " << sanitizeForConsole(event.src_ip)
+                  << " -> " << sanitizeForConsole(event.target_ip)
+                  << " (" << sanitizeForConsole(event.detail) << ")\033[0m\n";
     }
 }
 
@@ -164,23 +220,29 @@ void EventSink::emitAlert(const SecurityAlert& alert) {
     std::string json = alert.toJSON();
     emitRawJSON(json);
 
-    if (console_alerts_) {
+    if (console_alerts_.load()) {
         std::string color = alert.blocked ? "\033[1;31m" : "\033[1;33m";
-        std::cout << color << "[SECURITY] " << alert.alert_type
+        std::cout << color << "[SECURITY] " << sanitizeForConsole(alert.alert_type)
                   << (alert.blocked ? " [BLOCKED]" : " [FLAGGED]")
-                  << " " << alert.app_or_domain
-                  << " (" << alert.detail << ")\033[0m\n";
+                  << " " << sanitizeForConsole(alert.app_or_domain)
+                  << " (" << sanitizeForConsole(alert.detail) << ")\033[0m\n";
     }
 }
 
 void EventSink::emitRawJSON(const std::string& json) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (outfile_.is_open()) {
-        outfile_ << json << "\n";
-        outfile_.flush();
+    EventCallback cb;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (outfile_.is_open()) {
+            outfile_ << json << "\n";
+            outfile_.flush();
+        }
+        // Copy the callback so it is invoked without holding the lock; a
+        // callback that re-enters EventSink would otherwise deadlock.
+        cb = callback_;
     }
-    if (callback_) {
-        callback_(json);
+    if (cb) {
+        cb(json);
     }
 }
 

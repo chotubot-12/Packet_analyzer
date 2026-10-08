@@ -52,7 +52,7 @@ public:
     bool downloadOnline(const std::string& save_path = "urlhaus_online.txt");
 
     // Load bundled offline fallback sample domains
-    size_t loadBundledSample(const std::string& sample_path = "data/urlhaus_sample.txt");
+    size_t loadBundledSample(const std::string& sample_path = "data/urlhaus_test_sample.txt");
 
     // Add single domain or URL
     void addDomain(const std::string& domain);
@@ -71,7 +71,7 @@ public:
     size_t size() const;
 
     // Refresh management
-    void setRefreshInterval(std::chrono::seconds interval) { refresh_interval_ = interval; }
+    void setRefreshInterval(std::chrono::seconds interval);
     bool shouldRefresh() const;
 
     void clear();
@@ -81,6 +81,7 @@ private:
     DomainTrie trie_;
     std::unordered_set<std::string> domain_set_;
     std::string source_url_{"https://urlhaus.abuse.ch/downloads/text/"};
+    mutable std::mutex refresh_mutex_;
     std::chrono::steady_clock::time_point last_refresh_;
     std::chrono::seconds refresh_interval_{std::chrono::hours(24)};
 };

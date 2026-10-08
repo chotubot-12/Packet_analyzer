@@ -35,13 +35,15 @@ public:
         size_t dns_tunnel_min_label_len = 20;
         double dns_tunnel_min_entropy = 4.0;
         double dns_tunnel_cooldown = 10.0;
+        size_t dns_tunnel_max_entries = 10000;  // LRU/state cap
 
         // Auto-blocking
         bool auto_block_port_scans = true;
         bool auto_block_syn_floods = true;
     };
 
-    explicit AnomalyDetector(const Config& config = Config());
+    AnomalyDetector();
+    explicit AnomalyDetector(const Config& config);
 
     // Process a packet for port scan and SYN flood detection
     // Returns true if packet is part of an anomaly that should be dropped
@@ -95,7 +97,6 @@ private:
     struct PortScanEntry {
         std::vector<PortRecord> records;
         double last_alert_time{0.0};
-        bool is_alerted{false};
     };
 
     using PortScanMap = std::unordered_map<PortScanKey, PortScanEntry, PortScanKeyHash>;
@@ -119,7 +120,6 @@ private:
     struct SYNFloodEntry {
         std::vector<SYNRecord> syn_records;
         double last_alert_time{0.0};
-        bool is_alerted{false};
     };
 
     using SYNFloodMap = std::unordered_map<uint32_t, SYNFloodEntry>;

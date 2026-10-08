@@ -10,6 +10,9 @@
 #include <windows.h>
 #include <urlmon.h>
 #pragma comment(lib, "urlmon.lib")
+#else
+#include <unistd.h>
+#include <sys/wait.h>
 #endif
 
 namespace DPI {
@@ -48,6 +51,32 @@ std::vector<std::string> getReversedLabels(const std::string& domain) {
         end = dot;
     }
     return labels;
+}
+
+// Download a URL to a local file using curl via argv (no shell interpolation).
+// Returns true on success. No-op on Windows (native URLDownloadToFileA is used).
+bool runCurlDownload(const std::string& url, const std::string& out_path) {
+#ifdef _WIN32
+    (void)url;
+    (void)out_path;
+    return false;
+#else
+    pid_t pid = fork();
+    if (pid < 0) {
+        return false;
+    }
+    if (pid == 0) {
+        // Child: never touches the shell, so the URL/path cannot be injected.
+        execlp("curl", "curl", "-s", "-f", "-L", url.c_str(), "-o", out_path.c_str(),
+               static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        return false;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+#endif
 }
 
 } // namespace
@@ -193,7 +222,10 @@ size_t Blocklist::loadFromFile(const std::string& filepath) {
         }
     }
 
-    last_refresh_ = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(refresh_mutex_);
+        last_refresh_ = std::chrono::steady_clock::now();
+    }
     return loaded;
 }
 
@@ -210,11 +242,9 @@ bool Blocklist::downloadOnline(const std::string& save_path) {
     }
 #endif
 
-    // If native download didn't succeed, try system curl
+    // If native download didn't succeed, try curl via argv (no shell).
     if (!success) {
-        std::string cmd = "curl -s -f -L \"" + source_url_ + "\" -o \"" + save_path + "\"";
-        int res = std::system(cmd.c_str());
-        if (res == 0) {
+        if (runCurlDownload(source_url_, save_path)) {
             success = true;
         }
     }
@@ -292,7 +322,13 @@ void Blocklist::clear() {
     domain_set_.clear();
 }
 
+void Blocklist::setRefreshInterval(std::chrono::seconds interval) {
+    std::lock_guard<std::mutex> lock(refresh_mutex_);
+    refresh_interval_ = interval;
+}
+
 bool Blocklist::shouldRefresh() const {
+    std::lock_guard<std::mutex> lock(refresh_mutex_);
     auto now = std::chrono::steady_clock::now();
     return (now - last_refresh_) > refresh_interval_;
 }
