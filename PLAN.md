@@ -9,7 +9,7 @@
 |---|---|
 | **Lead** | Naman Singh ([@namann5](https://github.com/namann5)) |
 | Track A — Capture + Rules | Naman Singh ([@namann5](https://github.com/namann5)) — delivered, see §5 |
-| Track B — Security | _TBD_ |
+| Track B — Security | ✅ delivered (§6) |
 | Track C — Dashboard | Delivered, see §7 |
 **Target platform:** Cross-platform (Windows native + Linux / WSL)
 **Build system:** Meson

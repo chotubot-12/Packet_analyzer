@@ -8,8 +8,8 @@
     "name": "WireGuard Subnet"
   },
   {
-    "cidr": "198.51.100.0/24",
-    "name": "Commercial VPN Gateway"
+    "cidr": "198.18.0.0/15",
+    "name": "Commercial VPN Ranges (Example)"
   },
   {
     "cidr": "185.220.101.0/24",
